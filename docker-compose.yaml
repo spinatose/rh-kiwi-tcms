@@ -27,6 +27,7 @@ services:
             - uploads:/Kiwi/uploads:rw
             - static_files:/Kiwi/static:rw
             - ./branding:/Kiwi/custom_static:ro
+            - ./branding/patternfly_override.css:/Kiwi/static/style/patternfly_override.css:ro
         environment:
             KIWI_DB_HOST: db
             KIWI_DB_PORT: 3306

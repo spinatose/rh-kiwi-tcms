@@ -54,7 +54,26 @@ environment:
   STATICFILES_DIRS: /Kiwi/custom_static
 ```
 
-### 7. Final Docker Compose Configuration
+### 7. UI Customization
+- Create and modify the `branding/patternfly_override.css` file to customize UI colors and styles
+- This file is automatically mounted to the correct location in the container and will override the default Patternfly styles
+- Example: To change the top border color, add or modify this CSS rule:
+```css
+.navbar.navbar-default {
+    border-top-color: #e11f00 !important;
+}
+```
+- Add the CSS file mount to docker-compose.yaml:
+```yaml
+volumes:
+  - ./branding/patternfly_override.css:/Kiwi/static/style/patternfly_override.css:ro
+```
+- After making CSS changes, restart the containers to apply the changes:
+```bash
+docker-compose down && docker-compose up -d
+```
+
+### 8. Final Docker Compose Configuration
 ```yaml
 services:
     db:
@@ -84,6 +103,7 @@ services:
             - uploads:/Kiwi/uploads:rw
             - static_files:/Kiwi/static:rw
             - ./branding:/Kiwi/custom_static:ro
+            - ./branding/patternfly_override.css:/Kiwi/static/style/patternfly_override.css:ro
         environment:
             KIWI_DB_HOST: db
             KIWI_DB_PORT: 3306
@@ -103,7 +123,7 @@ volumes:
         driver: local
 ```
 
-### 8. Final Steps to Start the System
+### 9. Final Steps to Start the System
 ```bash
 # Stop any running containers
 docker compose down
@@ -118,11 +138,11 @@ docker exec -it kiwi_web /Kiwi/manage.py collectstatic --noinput
 docker compose restart web
 ```
 
-### 9. Accessing Kiwi TCMS
+### 10. Accessing Kiwi TCMS
 - HTTP: `http://localhost:8080`
 - HTTPS: `https://localhost:443`
 
-### 10. Useful Commands for Management
+### 11. Useful Commands for Management
 - Start the system: `docker compose up -d`
 - Stop the system: `docker compose down`
 - View logs: `docker compose logs -f`
