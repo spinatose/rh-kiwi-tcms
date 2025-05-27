@@ -180,6 +180,11 @@ docker compose restart web
       2. When Test Case shows up- click it and then click "+" button to add to Test Run   
       3. Repeat for rest of Test Cases   
       4. NOTE: Only "CONFIRMED" status Test Cases are available to add to Test Run  
+      5. Assign tester for executions
+         1. Once Test Cases have been added for executions, then mark the checkbox next to all Test Cases that should be executed by a given tester
+         2. Click the hamburger menu icon at the top and to the left of the list of Test Cases and choose "Assign User"
+         3. In the popup that appears, type the email of a user that is a tester in the TCMS and click OK
+         4. The tester will now be assigned to each Test Case for execution that was checked
 ### 5. Test Run \- Test Executions   
    1. Once all Test Cases are added to Test Run, they can be executed   
       1. Click "Started at:" button to indicate Test Run has begun   
