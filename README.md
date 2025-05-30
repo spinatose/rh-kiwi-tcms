@@ -297,7 +297,10 @@ spec:
         - name: KIWI_DB_NAME
           value: "kiwi"
         - name: KIWI_DB_USER
-          value: "kiwi"
+          valueFrom:
+            secretKeyRef:
+              name: kiwi-db-secret
+              key: username
         - name: KIWI_DB_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -347,7 +350,168 @@ kubectl get pods
 kubectl get services
 ```
 
-### 4. Configure Ingress and SSL
+### 4. Customize Logo and UI
+
+#### 4.1 Create Customization ConfigMap
+```yaml
+# kiwi-customization-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kiwi-customization
+data:
+  patternfly_override.css: |
+    .navbar.navbar-default {
+        border-top-color: #e11f00 !important;
+    }
+    /* Add any additional CSS customizations here */
+```
+
+#### 4.2 Create Customization Volume
+```yaml
+# kiwi-customization-pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kiwi-customization
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: azurefile
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+#### 4.3 Update Deployment with Customizations
+```yaml
+# kiwi-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kiwi-tcms
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kiwi-tcms
+  template:
+    metadata:
+      labels:
+        app: kiwi-tcms
+    spec:
+      initContainers:
+      - name: copy-customization
+        image: busybox
+        command: ['sh', '-c', 'cp /customization/kiwi_h20.png /custom_static/kiwi_h20.png']
+        volumeMounts:
+        - name: customization
+          mountPath: /customization
+        - name: custom-static
+          mountPath: /Kiwi/custom_static
+      containers:
+      - name: kiwi-tcms
+        image: pub.kiwitcms.eu/kiwitcms/kiwi:latest
+        ports:
+        - containerPort: 80
+        env:
+        - name: KIWI_DB_HOST
+          value: "<your-mysql-server>.mysql.database.azure.com"
+        - name: KIWI_DB_PORT
+          value: "3306"
+        - name: KIWI_DB_NAME
+          value: "kiwi"
+        - name: KIWI_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: kiwi-db-secret
+              key: username
+        - name: KIWI_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: kiwi-db-secret
+              key: password
+        - name: STATICFILES_DIRS
+          value: "/Kiwi/custom_static"
+        volumeMounts:
+        - name: uploads
+          mountPath: /Kiwi/uploads
+        - name: custom-static
+          mountPath: /Kiwi/custom_static
+        - name: css-override
+          mountPath: /Kiwi/static/style/patternfly_override.css
+          subPath: patternfly_override.css
+      volumes:
+      - name: uploads
+        azureFile:
+          secretName: azure-storage-secret
+          shareName: kiwitcms-uploads
+          readOnly: false
+      - name: customization
+        persistentVolumeClaim:
+          claimName: kiwi-customization
+      - name: custom-static
+        emptyDir: {}
+      - name: css-override
+        configMap:
+          name: kiwi-customization
+```
+
+#### 4.4 Apply Customizations
+```bash
+# Create the customization PVC
+kubectl apply -f kiwi-customization-pvc.yaml
+
+# Create the customization ConfigMap
+kubectl apply -f kiwi-customization-configmap.yaml
+
+# Copy the logo file to the PVC
+kubectl cp ./branding/rhblkbkgdsmall.png kiwi-tcms-customization:/customization/kiwi_h20.png
+
+# Update the deployment
+kubectl apply -f kiwi-deployment.yaml
+
+# Collect static files
+kubectl exec -it $(kubectl get pod -l app=kiwi-tcms -o jsonpath="{.items[0].metadata.name}") -- /Kiwi/manage.py collectstatic --noinput
+```
+
+#### 4.5 Update Customizations
+To update the UI customizations:
+
+1. **Update CSS**:
+```bash
+# Edit the ConfigMap
+kubectl edit configmap kiwi-customization
+
+# Or apply a new ConfigMap
+kubectl apply -f kiwi-customization-configmap.yaml
+
+# Restart the pods to apply changes
+kubectl rollout restart deployment kiwi-tcms
+```
+
+2. **Update Logo**:
+```bash
+# Copy new logo to the PVC
+kubectl cp ./branding/new-logo.png kiwi-tcms-customization:/customization/kiwi_h20.png
+
+# Restart the pods to apply changes
+kubectl rollout restart deployment kiwi-tcms
+```
+
+#### 4.6 Verify Customizations
+```bash
+# Check if the customization PVC is mounted correctly
+kubectl describe pod $(kubectl get pod -l app=kiwi-tcms -o jsonpath="{.items[0].metadata.name}")
+
+# Check if the CSS override is applied
+kubectl exec -it $(kubectl get pod -l app=kiwi-tcms -o jsonpath="{.items[0].metadata.name}") -- cat /Kiwi/static/style/patternfly_override.css
+
+# Check if the logo is in place
+kubectl exec -it $(kubectl get pod -l app=kiwi-tcms -o jsonpath="{.items[0].metadata.name}") -- ls -l /Kiwi/custom_static/kiwi_h20.png
+```
+
+### 5. Configure Ingress and SSL
 ```yaml
 # kiwi-ingress.yaml
 apiVersion: networking.k8s.io/v1
@@ -394,7 +558,7 @@ helm install cert-manager jetstack/cert-manager \
 kubectl apply -f kiwi-ingress.yaml
 ```
 
-### 5. Configure Monitoring and Logging
+### 6. Configure Monitoring and Logging
 ```bash
 # Enable Azure Monitor for containers
 az aks enable-addons \
@@ -408,7 +572,7 @@ az monitor log-analytics workspace create \
     --workspace-name kiwi-tcms-logs
 ```
 
-### 6. Set Up Auto-scaling
+### 7. Set Up Auto-scaling
 ```bash
 # Enable cluster autoscaler
 az aks update \
@@ -425,9 +589,9 @@ kubectl autoscale deployment kiwi-tcms \
     --max=5
 ```
 
-### 7. Backup and Disaster Recovery
+### 8. Backup and Disaster Recovery
 
-#### 7.1 Database Backup Strategy
+#### 8.1 Database Backup Strategy
 ```bash
 # Enable automated backups for Azure Database for MySQL
 az mysql server configuration set \
@@ -450,7 +614,7 @@ az mysql server update \
     --geo-redundant-backup Enabled
 ```
 
-#### 7.2 Storage Backup
+#### 8.2 Storage Backup
 ```bash
 # Enable soft delete for Azure Files
 az storage account blob-service-properties update \
@@ -474,7 +638,7 @@ az backup protection enable-for-azurefileshare \
     --policy-name DefaultPolicy
 ```
 
-#### 7.3 Kubernetes State Backup
+#### 8.3 Kubernetes State Backup
 ```bash
 # Create a backup namespace
 kubectl create namespace velero
@@ -495,7 +659,7 @@ velero schedule create kiwi-tcms-daily \
     --ttl 720h
 ```
 
-#### 7.4 Disaster Recovery Plan
+#### 8.4 Disaster Recovery Plan
 
 1. **Database Recovery**:
 ```bash
@@ -541,7 +705,7 @@ velero backup get
 velero restore create --from-backup kiwi-tcms-daily-20240101-010000
 ```
 
-#### 7.5 Cross-Region Disaster Recovery
+#### 8.5 Cross-Region Disaster Recovery
 ```bash
 # Create a secondary region resource group
 az group create --name kiwi-tcms-dr-rg --location westus2
@@ -560,7 +724,7 @@ az mysql server replica create \
     --source-server kiwi-tcms-db
 ```
 
-#### 7.6 Recovery Testing Procedures
+#### 8.6 Recovery Testing Procedures
 1. **Database Recovery Test**:
 ```bash
 # Create a test restore
@@ -596,7 +760,7 @@ kubectl create namespace recovery-test
 velero restore create --from-backup kiwi-tcms-daily-20240101-010000 --namespace-mappings default:recovery-test
 ```
 
-#### 7.7 Monitoring and Alerts
+#### 8.7 Monitoring and Alerts
 ```bash
 # Create backup monitoring alerts
 az monitor metrics alert create \
@@ -777,7 +941,183 @@ kubectl get pods
 kubectl get services
 ```
 
-### 5. Configure Ingress and SSL
+### 5. Customize Logo and UI
+
+#### 5.1 Create Customization ConfigMap
+```yaml
+# kiwi-customization-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kiwi-customization
+data:
+  patternfly_override.css: |
+    .navbar.navbar-default {
+        border-top-color: #e11f00 !important;
+    }
+    /* Add any additional CSS customizations here */
+```
+
+#### 5.2 Set Up Customization Storage
+```bash
+# Create a Cloud Storage bucket for customizations
+gsutil mb -l us-central1 gs://kiwi-tcms-customization
+
+# Upload the logo file
+gsutil cp ./branding/rhblkbkgdsmall.png gs://kiwi-tcms-customization/kiwi_h20.png
+
+# Create a service account for the container
+gcloud iam service-accounts create kiwi-customization-sa \
+    --display-name="Kiwi TCMS Customization Service Account"
+
+# Grant storage access to the service account
+gsutil iam ch \
+    serviceAccount:kiwi-customization-sa@$PROJECT_ID.iam.gserviceaccount.com:objectViewer \
+    gs://kiwi-tcms-customization
+
+# Create a secret for the service account key
+kubectl create secret generic kiwi-customization-sa-key \
+    --from-file=key.json=/path/to/service-account-key.json
+```
+
+#### 5.3 Update Deployment with Customizations
+```yaml
+# kiwi-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kiwi-tcms
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kiwi-tcms
+  template:
+    metadata:
+      labels:
+        app: kiwi-tcms
+    spec:
+      initContainers:
+      - name: copy-customization
+        image: google/cloud-sdk:slim
+        command: ['sh', '-c', 'gsutil cp gs://kiwi-tcms-customization/kiwi_h20.png /custom_static/kiwi_h20.png']
+        volumeMounts:
+        - name: custom-static
+          mountPath: /custom_static
+        - name: sa-key
+          mountPath: /var/secrets/google
+        env:
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /var/secrets/google/key.json
+      containers:
+      - name: kiwi-tcms
+        image: pub.kiwitcms.eu/kiwitcms/kiwi:latest
+        ports:
+        - containerPort: 80
+        env:
+        - name: KIWI_DB_HOST
+          value: "<your-cloud-sql-connection-name>"
+        - name: KIWI_DB_PORT
+          value: "3306"
+        - name: KIWI_DB_NAME
+          value: "kiwi"
+        - name: KIWI_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: kiwi-db-secret
+              key: username
+        - name: KIWI_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: kiwi-db-secret
+              key: password
+        - name: STATICFILES_DIRS
+          value: "/Kiwi/custom_static"
+        volumeMounts:
+        - name: uploads
+          mountPath: /Kiwi/uploads
+        - name: custom-static
+          mountPath: /Kiwi/custom_static
+        - name: css-override
+          mountPath: /Kiwi/static/style/patternfly_override.css
+          subPath: patternfly_override.css
+      volumes:
+      - name: uploads
+        gcePersistentDisk:
+          pdName: kiwi-tcms-uploads
+          fsType: ext4
+      - name: custom-static
+        emptyDir: {}
+      - name: css-override
+        configMap:
+          name: kiwi-customization
+      - name: sa-key
+        secret:
+          secretName: kiwi-customization-sa-key
+```
+
+#### 5.4 Apply Customizations
+```bash
+# Create the customization ConfigMap
+kubectl apply -f kiwi-customization-configmap.yaml
+
+# Update the deployment
+kubectl apply -f kiwi-deployment.yaml
+
+# Collect static files
+kubectl exec -it $(kubectl get pod -l app=kiwi-tcms -o jsonpath="{.items[0].metadata.name}") -- /Kiwi/manage.py collectstatic --noinput
+```
+
+#### 5.5 Update Customizations
+To update the UI customizations:
+
+1. **Update CSS**:
+```bash
+# Edit the ConfigMap
+kubectl edit configmap kiwi-customization
+
+# Or apply a new ConfigMap
+kubectl apply -f kiwi-customization-configmap.yaml
+
+# Restart the pods to apply changes
+kubectl rollout restart deployment kiwi-tcms
+```
+
+2. **Update Logo**:
+```bash
+# Upload new logo to Cloud Storage
+gsutil cp ./branding/new-logo.png gs://kiwi-tcms-customization/kiwi_h20.png
+
+# Restart the pods to apply changes
+kubectl rollout restart deployment kiwi-tcms
+```
+
+#### 5.6 Verify Customizations
+```bash
+# Check if the CSS override is applied
+kubectl exec -it $(kubectl get pod -l app=kiwi-tcms -o jsonpath="{.items[0].metadata.name}") -- cat /Kiwi/static/style/patternfly_override.css
+
+# Check if the logo is in place
+kubectl exec -it $(kubectl get pod -l app=kiwi-tcms -o jsonpath="{.items[0].metadata.name}") -- ls -l /Kiwi/custom_static/kiwi_h20.png
+
+# Check the init container logs
+kubectl logs $(kubectl get pod -l app=kiwi-tcms -o jsonpath="{.items[0].metadata.name}") -c copy-customization
+```
+
+#### 5.7 Backup Customizations
+```bash
+# Backup the CSS configuration
+kubectl get configmap kiwi-customization -o yaml > kiwi-customization-backup.yaml
+
+# Backup the logo file
+gsutil cp gs://kiwi-tcms-customization/kiwi_h20.png ./backup/kiwi_h20.png
+
+# Create a backup of the Cloud Storage bucket
+gsutil mb -l us-central1 gs://kiwi-tcms-customization-backup
+gsutil -m cp -r gs://kiwi-tcms-customization/* gs://kiwi-tcms-customization-backup/
+```
+
+### 6. Configure Ingress and SSL
 ```yaml
 # kiwi-ingress.yaml
 apiVersion: networking.k8s.io/v1
@@ -812,16 +1152,6 @@ gcloud compute ssl-certificates create kiwi-tcms-cert \
 
 # Apply ingress configuration
 kubectl apply -f kiwi-ingress.yaml
-```
-
-### 6. Set Up Cloud SQL Connection
-```bash
-# Create a Cloud SQL proxy deployment
-kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/cloud-sql-proxy/master/manifests/cloud-sql-proxy.yaml
-
-# Configure the proxy to connect to your instance
-kubectl patch deployment cloud-sql-proxy \
-    --patch '{"spec":{"template":{"spec":{"containers":[{"name":"cloud-sql-proxy","args":["--structured-logs","--port=3306","<your-cloud-sql-connection-name>"]}]}}}}'
 ```
 
 ### 7. Configure Monitoring and Logging
