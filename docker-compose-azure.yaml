@@ -1,0 +1,19 @@
+services:
+
+
+    web:
+        container_name: kiwi_web
+        restart: always
+        image: pub.kiwitcms.eu/kiwitcms/kiwi:latest
+        ports:
+            - 8080:8080
+            - 443:8443
+        environment:
+            KIWI_DB_ENGINE: django.db.backends.postgresql
+            KIWI_DB_HOST: kiwi-tcms-db.postgres.database.azure.com
+            KIWI_DB_PORT: 5432
+            KIWI_DB_NAME: kiwi
+            KIWI_DB_USER: kiwi
+            KIWI_DB_PASSWORD: Redhawk2025%
+        cap_drop:
+            - ALL
